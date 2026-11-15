@@ -6,6 +6,8 @@ import LayerDetail from './pages/LayerDetail.vue'
 import LayerSummary from './pages/LayerSummary.vue'
 import Jobs from './pages/Jobs.vue'
 import Reconcile from './pages/Reconcile.vue'
+import MaskRules from './pages/MaskRules.vue'
+import MaskSnapshots from './pages/MaskSnapshots.vue'
 
 export default createRouter({
   history: createWebHistory(),
@@ -17,5 +19,7 @@ export default createRouter({
     { path: '/summary', component: LayerSummary },
     { path: '/jobs', component: Jobs },
     { path: '/reconcile', component: Reconcile },
+    { path: '/mask-rules', component: MaskRules },
+    { path: '/mask-exports', component: MaskSnapshots },
   ],
 })

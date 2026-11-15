@@ -79,6 +79,92 @@ CREATE TABLE IF NOT EXISTS reconcile_reports (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY(domain_id) REFERENCES domains(id)
 );
+
+-- 脱敏规则：按版本固化，只增不改；启用哪一版只影响之后新生成的快照/导出
+CREATE TABLE IF NOT EXISTS mask_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version INTEGER NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  keep_head INTEGER NOT NULL DEFAULT 1,
+  keep_tail INTEGER NOT NULL DEFAULT 1,
+  mask_char TEXT NOT NULL DEFAULT '*',
+  enabled INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 脱敏快照批次：明细行数与快照行数在同一趟读取、同一事务内登记（同源）
+CREATE TABLE IF NOT EXISTS mask_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  domain_id INTEGER NOT NULL,
+  rule_version INTEGER NOT NULL,
+  detail_rows INTEGER NOT NULL,
+  snapshot_rows INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(domain_id) REFERENCES domains(id)
+);
+
+-- 脱敏快照表：按规则版本+批次固化行，与明文明细物理隔离；只存脱敏结果与溯源指针，不存明文店名
+CREATE TABLE IF NOT EXISTS mask_snapshot_rows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL,
+  rule_version INTEGER NOT NULL,
+  domain_id INTEGER NOT NULL,
+  biz_day TEXT NOT NULL,
+  store_code TEXT NOT NULL,
+  store_name_masked TEXT NOT NULL,
+  category TEXT NOT NULL,
+  amount REAL NOT NULL,
+  qty INTEGER NOT NULL,
+  source_detail_id INTEGER NOT NULL,
+  source_name_hash TEXT NOT NULL,
+  FOREIGN KEY(batch_id) REFERENCES mask_batches(id)
+);
+
+-- 导出记录：规则版本、成败、失败原因、快照行数等均由本趟批次同源派生
+CREATE TABLE IF NOT EXISTS export_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  domain_id INTEGER NOT NULL,
+  batch_id INTEGER NOT NULL,
+  rule_version INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  fail_reason TEXT NOT NULL DEFAULT '',
+  snapshot_rows INTEGER NOT NULL,
+  detail_rows INTEGER NOT NULL,
+  sample_checked INTEGER NOT NULL DEFAULT 0,
+  file_path TEXT NOT NULL DEFAULT '',
+  content_hash TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(batch_id) REFERENCES mask_batches(id)
+);
+
+-- 内部只读脱敏视图：按当前启用规则即时脱敏，仅供查看；
+-- 禁止作为层间对账或分层任务的数据源（它们一律基于 layer_detail 原文）。
+-- 注意：本视图不是快照，历史批次的脱敏结果以 mask_snapshot_rows 为准。
+CREATE VIEW IF NOT EXISTS v_detail_masked AS
+SELECT
+  d.id AS id,
+  d.domain_id AS domain_id,
+  d.biz_day AS biz_day,
+  d.store_code AS store_code,
+  CASE
+    WHEN length(d.store_name) = 0 THEN ''
+    WHEN length(d.store_name) <= r.keep_head + r.keep_tail THEN
+      substr(d.store_name, 1, r.keep_head) ||
+      replace(hex(zeroblob(max(length(d.store_name) - r.keep_head, 1))), '00', r.mask_char)
+    ELSE
+      substr(d.store_name, 1, r.keep_head) ||
+      replace(hex(zeroblob(length(d.store_name) - r.keep_head - r.keep_tail)), '00', r.mask_char) ||
+      substr(d.store_name, length(d.store_name) - r.keep_tail + 1, r.keep_tail)
+  END AS store_name_masked,
+  d.category AS category,
+  d.amount AS amount,
+  d.qty AS qty,
+  d.clean_flag AS clean_flag,
+  r.version AS rule_version
+FROM layer_detail d
+JOIN mask_rules r ON r.enabled = 1;
 """
 
 
@@ -89,9 +175,21 @@ def init_db() -> None:
         row = conn.execute("SELECT COUNT(*) AS c FROM domains").fetchone()
         if int(row["c"]) == 0:
             _seed_domain(conn)
+        rule_row = conn.execute("SELECT COUNT(*) AS c FROM mask_rules").fetchone()
+        if int(rule_row["c"]) == 0:
+            _seed_mask_rule(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def _seed_mask_rule(conn) -> None:
+    conn.execute(
+        """
+        INSERT INTO mask_rules(version, name, keep_head, keep_tail, mask_char, enabled)
+        VALUES (1, '店名保留首尾中间掩码', 1, 1, '*', 1)
+        """
+    )
 
 
 def _seed_domain(conn) -> None:

@@ -292,6 +292,22 @@ select {
   color: var(--ink);
 }
 
+input {
+  font: inherit;
+  padding: 7px 10px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+}
+input[type="number"] { width: 5.5em; }
+input.mask-char { width: 3em; }
+
+td.hash {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
 .cards { display: contents; }
 .card { display: none; }
 

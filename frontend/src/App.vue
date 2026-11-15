@@ -15,6 +15,8 @@
         <router-link to="/summary">汇总层</router-link>
         <router-link to="/jobs">分层任务</router-link>
         <router-link to="/reconcile">层间对账</router-link>
+        <router-link to="/mask-rules">脱敏规则</router-link>
+        <router-link to="/mask-exports">快照导出</router-link>
       </nav>
     </header>
     <div class="stratum" aria-hidden="true">
